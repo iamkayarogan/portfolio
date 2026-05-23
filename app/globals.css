@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,15 +12,72 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ─── Light theme overrides ───────────────────────────────────────── */
+html.light {
+  --background: #fafafa;
+  --foreground: #171717;
+}
+
+/* Backgrounds */
+html.light .bg-neutral-950 { background-color: #fafafa !important; }
+html.light .bg-neutral-900 { background-color: #ffffff !important; }
+html.light .bg-neutral-900\/40 { background-color: rgba(255, 255, 255, 0.6) !important; }
+html.light .bg-neutral-900\/50 { background-color: rgba(255, 255, 255, 0.7) !important; }
+html.light .bg-neutral-900\/60 { background-color: rgba(255, 255, 255, 0.7) !important; }
+html.light .bg-neutral-800 { background-color: #e5e5e5 !important; }
+html.light .hover\:bg-neutral-800:hover { background-color: #e5e5e5 !important; }
+
+/* Text */
+html.light .text-neutral-100 { color: #171717 !important; }
+html.light .text-neutral-200 { color: #262626 !important; }
+html.light .text-neutral-300 { color: #404040 !important; }
+html.light .hover\:text-neutral-100:hover { color: #171717 !important; }
+html.light .hover\:text-neutral-200:hover { color: #262626 !important; }
+html.light .text-neutral-400 { color: #525252 !important; }
+html.light .text-neutral-500 { color: #737373 !important; }
+html.light .text-neutral-700 { color: #d4d4d4 !important; }
+
+/* Borders */
+html.light .border-neutral-800 { border-color: #e5e5e5 !important; }
+html.light .border-neutral-700 { border-color: #d4d4d4 !important; }
+html.light .hover\:border-neutral-500:hover { border-color: #a3a3a3 !important; }
+
+/* Tinted background panels (today's buy list, edit-active rows) — already removed but keep safe defaults */
+html.light .bg-emerald-950\/20 { background-color: rgba(16, 185, 129, 0.08) !important; }
+html.light .border-emerald-700\/40 { border-color: rgba(16, 185, 129, 0.5) !important; }
+
+/* Body background reflects scheme so empty regions match */
+html.light body { background-color: #fafafa; }
+html.light .bg-neutral-900\/60.backdrop-blur,
+html.light header.bg-neutral-900\/60 { background-color: rgba(255, 255, 255, 0.85) !important; }
+
+/* Stronger contrast for tone accents on light backgrounds */
+html.light .text-emerald-400 { color: #059669 !important; }
+html.light .text-emerald-300 { color: #047857 !important; }
+html.light .text-rose-400 { color: #e11d48 !important; }
+html.light .text-rose-300 { color: #be123c !important; }
+
+/* Inputs */
+html.light input,
+html.light select {
+  background-color: #ffffff !important;
+  color: #171717 !important;
+  border-color: #d4d4d4 !important;
+}
+html.light input::placeholder { color: #a3a3a3 !important; }
+
+/* AllocationPie center hole + segment stroke (drawn with neutral-950) */
+html.light circle[fill="#0a0a0a"] { fill: #fafafa !important; }
+html.light path[stroke="#0a0a0a"] { stroke: #fafafa !important; }
+html.light text.fill-neutral-400 { fill: #525252 !important; }
+html.light text.fill-neutral-100 { fill: #171717 !important; }
+
+/* RangeBar pointer: invert in light mode for contrast against the gradient */
+html.light .bg-neutral-100.ring-neutral-950 {
+  background-color: #171717 !important;
+  --tw-ring-color: #ffffff !important;
 }
