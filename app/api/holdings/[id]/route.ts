@@ -82,7 +82,7 @@ export async function PUT(
            currency = ?, notes = ?, sector = ?, region = ?, fund_type = ?,
            interest_rate = ?, maturity_date = ?, commodity_metal = ?,
            commodity_form = ?, current_price = ?, market_cap_usd = ?,
-           updated_at = ?
+           book_value = ?, peg_ratio = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     next.asset_type,
@@ -101,6 +101,8 @@ export async function PUT(
     next.commodity_form,
     next.current_price,
     next.market_cap_usd,
+    next.book_value,
+    next.peg_ratio,
     next.updated_at,
     numId,
   );

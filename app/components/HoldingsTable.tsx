@@ -1,16 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { HoldingRow } from "@/lib/db";
 import { formatCurrency, formatPercent, toInr } from "@/lib/format";
 import type { PriceQuote } from "@/lib/prices";
 import { updateHolding } from "@/lib/api-client";
 
+interface ExtraColumn {
+  key: string;
+  label: string;
+  format?: (
+    value: HoldingRow[keyof HoldingRow] | undefined,
+    row: HoldingRow,
+  ) => React.ReactNode;
+}
+
 interface Props {
   rows: HoldingRow[];
   quotes: Record<string, PriceQuote>;
   usdInr: number | null;
-  extraColumns?: { key: keyof HoldingRow; label: string }[];
+  extraColumns?: ExtraColumn[];
+  holdingMeta?: (row: HoldingRow) => React.ReactNode;
   onUpdate?: (updated: HoldingRow) => void;
   onDelete?: (id: number) => void;
 }
@@ -25,6 +35,7 @@ export default function HoldingsTable({
   quotes,
   usdInr,
   extraColumns,
+  holdingMeta,
   onUpdate,
   onDelete,
 }: Props) {
@@ -90,26 +101,27 @@ export default function HoldingsTable({
         <p className="text-sm text-rose-400 px-1">{error}</p>
       ) : null}
       <div className="overflow-x-auto rounded-lg border border-neutral-800">
-        <table className="w-full text-sm">
-          <thead className="bg-neutral-900 text-neutral-400">
+        <table className="w-full text-xs">
+          <thead className="bg-neutral-900 text-neutral-400 text-[11px] uppercase tracking-wider">
             <tr>
-              <th className="text-left px-4 py-2">Symbol</th>
-              <th className="text-left px-4 py-2">Name</th>
+              <th className="text-left px-3 py-2">Holding</th>
               {extraColumns?.map((c) => (
-                <th key={String(c.key)} className="text-left px-4 py-2">
+                <th key={String(c.key)} className="text-left px-3 py-2">
                   {c.label}
                 </th>
               ))}
-              <th className="text-right px-4 py-2">Qty</th>
-              <th className="text-right px-4 py-2">Avg Buy</th>
-              <th className="text-right px-4 py-2">Price</th>
-              <th className="text-right px-4 py-2">Value</th>
-              <th className="text-right px-4 py-2">Gain</th>
-              {showActions && <th className="px-4 py-2" />}
+              <th className="text-right px-3 py-2">Qty</th>
+              <th className="text-right px-3 py-2">Avg Buy</th>
+              <th className="text-right px-3 py-2">Price</th>
+              <th className="text-right px-3 py-2">Value</th>
+              <th className="text-right px-3 py-2">Gain</th>
+              {showActions && <th className="px-3 py-2 w-px" />}
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
+              const totalCols =
+                1 + (extraColumns?.length ?? 0) + 5 + (showActions ? 1 : 0);
               const isEditing = editingId === r.id;
               const q = quotes[r.id];
               const price = q?.price ?? r.current_price ?? null;
@@ -128,15 +140,48 @@ export default function HoldingsTable({
                 r.currency === "USD" && currentInr !== null && usdInr;
 
               return (
-                <tr key={r.id} className="border-t border-neutral-800">
-                  <td className="px-4 py-2 font-mono text-xs">{r.symbol}</td>
-                  <td className="px-4 py-2 text-neutral-300">{r.name}</td>
-                  {extraColumns?.map((c) => (
-                    <td key={String(c.key)} className="px-4 py-2 text-neutral-400">
-                      {(r[c.key] as string | number | null) ?? "—"}
-                    </td>
-                  ))}
-                  <td className="px-4 py-2 text-right tabular-nums">
+                <Fragment key={r.id}>
+                <tr className="border-t border-neutral-800">
+                  <td className="px-3 py-2 max-w-[260px]">
+                    <div
+                      className="font-mono text-[11px] text-neutral-100 truncate"
+                      title={r.symbol}
+                    >
+                      {r.symbol}
+                    </div>
+                    <div
+                      className="text-neutral-400 text-[11px] truncate"
+                      title={r.name}
+                    >
+                      {r.name}
+                    </div>
+                  </td>
+                  {extraColumns?.map((c) => {
+                    const rawValue =
+                      c.key in r
+                        ? (r as unknown as Record<string, unknown>)[c.key]
+                        : undefined;
+                    return (
+                      <td
+                        key={c.key}
+                        className="px-3 py-2 text-neutral-400 whitespace-nowrap max-w-[140px] truncate"
+                        title={
+                          typeof rawValue === "string" ||
+                          typeof rawValue === "number"
+                            ? String(rawValue)
+                            : undefined
+                        }
+                      >
+                        {c.format
+                          ? c.format(
+                              rawValue as HoldingRow[keyof HoldingRow] | undefined,
+                              r,
+                            )
+                          : ((rawValue as string | number | null) ?? "—")}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2 text-right tabular-nums">
                     {isEditing ? (
                       <input
                         type="text"
@@ -148,13 +193,13 @@ export default function HoldingsTable({
                             quantity: e.target.value.replace(/[^\d.-]/g, ""),
                           })
                         }
-                        className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-sm w-24 text-right"
+                        className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-xs w-20 text-right"
                       />
                     ) : (
                       r.quantity
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                     {isEditing ? (
                       <input
                         type="text"
@@ -166,7 +211,7 @@ export default function HoldingsTable({
                             avg_buy_price: e.target.value.replace(/[^\d.-]/g, ""),
                           })
                         }
-                        className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-sm w-28 text-right"
+                        className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-xs w-24 text-right"
                       />
                     ) : costUnknown ? (
                       <span className="italic text-neutral-500">unknown</span>
@@ -174,10 +219,10 @@ export default function HoldingsTable({
                       formatCurrency(r.avg_buy_price, r.currency)
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                     {price !== null ? formatCurrency(price, r.currency) : "—"}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                     {current !== null ? formatCurrency(current, r.currency) : "—"}
                     {showInrEquiv ? (
                       <div className="text-[10px] text-neutral-500">
@@ -186,12 +231,12 @@ export default function HoldingsTable({
                     ) : null}
                   </td>
                   <td
-                    className={`px-4 py-2 text-right tabular-nums whitespace-nowrap ${tone}`}
+                    className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${tone}`}
                   >
                     {gain !== null ? (
                       <>
                         <div>{formatCurrency(gain, r.currency)}</div>
-                        <div className="text-xs">
+                        <div className="text-[10px]">
                           {gainPct !== null ? formatPercent(gainPct) : ""}
                         </div>
                       </>
@@ -207,46 +252,61 @@ export default function HoldingsTable({
                     )}
                   </td>
                   {showActions && (
-                    <td className="px-4 py-2 text-right whitespace-nowrap">
+                    <td className="px-3 py-2 text-right whitespace-nowrap w-px">
                       {isEditing ? (
-                        <>
+                        <div className="inline-flex gap-1">
                           <button
                             onClick={() => saveEdit(r.id)}
                             disabled={busy}
-                            className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50 mr-3"
+                            title="Save"
+                            className="h-6 w-6 grid place-items-center rounded text-emerald-400 hover:bg-neutral-800 disabled:opacity-50"
                           >
-                            Save
+                            ✓
                           </button>
                           <button
                             onClick={cancelEdit}
-                            className="text-neutral-400 hover:text-neutral-200"
+                            title="Cancel"
+                            className="h-6 w-6 grid place-items-center rounded text-neutral-400 hover:bg-neutral-800"
                           >
-                            Cancel
+                            ✕
                           </button>
-                        </>
+                        </div>
                       ) : (
-                        <>
+                        <div className="inline-flex gap-1">
                           {onUpdate && (
                             <button
                               onClick={() => startEdit(r)}
-                              className="text-emerald-400 hover:text-emerald-300 mr-3"
+                              title="Edit"
+                              className="h-6 w-6 grid place-items-center rounded text-emerald-400 hover:bg-neutral-800"
                             >
-                              Edit
+                              ✎
                             </button>
                           )}
                           {onDelete && (
                             <button
                               onClick={() => onDelete(r.id)}
-                              className="text-rose-400 hover:text-rose-300"
+                              title="Delete"
+                              className="h-6 w-6 grid place-items-center rounded text-rose-400 hover:bg-neutral-800"
                             >
-                              Delete
+                              ✕
                             </button>
                           )}
-                        </>
+                        </div>
                       )}
                     </td>
                   )}
                 </tr>
+                {holdingMeta && !isEditing ? (
+                  <tr className="border-t-0">
+                    <td
+                      colSpan={totalCols}
+                      className="px-3 pb-2 text-[10px] text-neutral-500 whitespace-nowrap overflow-x-auto"
+                    >
+                      {holdingMeta(r)}
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>

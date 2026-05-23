@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { HoldingRow } from "@/lib/db";
 import type { PriceQuote } from "@/lib/prices";
 import { marketCapBucket } from "@/lib/market-cap";
+import { formatCurrency } from "@/lib/format";
 import { createHolding, deleteHolding } from "@/lib/api-client";
 import { aggregate } from "@/lib/aggregate";
 import SymbolSearch, {
@@ -13,6 +14,7 @@ import SymbolSearch, {
 import HoldingsTable from "@/app/components/HoldingsTable";
 import AllocationPie from "@/app/components/AllocationPie";
 import SummaryStats from "@/app/components/SummaryStats";
+import RangeBar from "@/app/components/RangeBar";
 import {
   Field,
   ErrorMessage,
@@ -206,9 +208,152 @@ export default function StocksManager({
         rows={rows}
         quotes={initialQuotes}
         usdInr={usdInr}
+        holdingMeta={(r) => {
+          const parts: React.ReactNode[] = [];
+          if (r.sector)
+            parts.push(
+              <span key="sec" className="text-neutral-400">
+                {r.sector}
+              </span>,
+            );
+          if (r.region)
+            parts.push(
+              <span key="reg" className="text-neutral-500">
+                {r.region}
+              </span>,
+            );
+          if (typeof r.roe === "number" && Number.isFinite(r.roe)) {
+            const good = r.roe > 0.15;
+            parts.push(
+              <span
+                key="roe"
+                className={good ? "text-emerald-400" : "text-neutral-500"}
+                title={good ? "ROE ≥ 15% — high profitability" : "ROE < 15%"}
+              >
+                ROE {(r.roe * 100).toFixed(1)}%
+              </span>,
+            );
+          }
+          if (typeof r.roce === "number" && Number.isFinite(r.roce)) {
+            const good = r.roce > 0.15;
+            parts.push(
+              <span
+                key="roce"
+                className={good ? "text-emerald-400" : "text-neutral-500"}
+                title={
+                  good
+                    ? "ROCE ≥ 15% — efficient use of capital"
+                    : "ROCE < 15%"
+                }
+              >
+                ROCE {(r.roce * 100).toFixed(1)}%
+              </span>,
+            );
+          }
+          if (
+            typeof r.debt_to_equity === "number" &&
+            Number.isFinite(r.debt_to_equity)
+          ) {
+            const good = r.debt_to_equity < 0.5;
+            parts.push(
+              <span
+                key="de"
+                className={good ? "text-emerald-400" : "text-neutral-500"}
+                title={good ? "D/E < 0.5 — low leverage" : "D/E ≥ 0.5"}
+              >
+                D/E {r.debt_to_equity.toFixed(2)}
+              </span>,
+            );
+          }
+          if (
+            typeof r.current_ratio === "number" &&
+            Number.isFinite(r.current_ratio)
+          ) {
+            const good = r.current_ratio > 2;
+            parts.push(
+              <span
+                key="cr"
+                className={good ? "text-emerald-400" : "text-neutral-500"}
+                title={good ? "Current ratio > 2 — strong solvency" : "CR ≤ 2"}
+              >
+                CR {r.current_ratio.toFixed(2)}
+              </span>,
+            );
+          }
+          if (
+            typeof r.book_value === "number" &&
+            Number.isFinite(r.book_value)
+          ) {
+            const q = initialQuotes[r.id];
+            const price = q?.price ?? null;
+            const pb =
+              price && r.book_value > 0 ? price / r.book_value : null;
+            parts.push(
+              <span
+                key="bv"
+                className="text-neutral-500"
+                title={
+                  pb !== null
+                    ? `Book value ${formatCurrency(r.book_value, r.currency)} · P/B ${pb.toFixed(2)}`
+                    : `Book value per share`
+                }
+              >
+                BV {formatCurrency(r.book_value, r.currency)}
+                {pb !== null ? (
+                  <span className="text-neutral-600 ml-1">
+                    (P/B {pb.toFixed(2)})
+                  </span>
+                ) : null}
+              </span>,
+            );
+          }
+          if (typeof r.peg_ratio === "number" && Number.isFinite(r.peg_ratio)) {
+            const good = r.peg_ratio > 0 && r.peg_ratio < 1;
+            parts.push(
+              <span
+                key="peg"
+                className={good ? "text-emerald-400" : "text-neutral-500"}
+                title={
+                  good
+                    ? "PEG < 1 — undervalued relative to growth"
+                    : "PEG ≥ 1"
+                }
+              >
+                PEG {r.peg_ratio.toFixed(2)}
+              </span>,
+            );
+          }
+          return (
+            <span className="inline-flex flex-wrap gap-x-2 gap-y-0.5">
+              {parts.map((p, i) => (
+                <span key={i}>
+                  {p}
+                  {i < parts.length - 1 && (
+                    <span className="text-neutral-700 ml-2">·</span>
+                  )}
+                </span>
+              ))}
+            </span>
+          );
+        }}
         extraColumns={[
-          { key: "sector", label: "Sector" },
-          { key: "region", label: "Region" },
+          {
+            key: "_52w_range",
+            label: "52W Range",
+            format: (_v, r) => {
+              const q = initialQuotes[r.id];
+              const high = q?.weekHigh52;
+              const low = q?.weekLow52;
+              const price = q?.price;
+              if (
+                typeof high !== "number" ||
+                typeof low !== "number" ||
+                typeof price !== "number"
+              )
+                return "—";
+              return <RangeBar low={low} high={high} current={price} />;
+            },
+          },
         ]}
         onUpdate={(updated) => {
           setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));

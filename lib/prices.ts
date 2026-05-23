@@ -9,6 +9,8 @@ export interface PriceQuote {
   price: number | null;
   currency: string | null;
   source: "yahoo" | "mfapi" | "spot" | "manual" | null;
+  weekHigh52: number | null;
+  weekLow52: number | null;
   error?: string;
 }
 
@@ -43,6 +45,8 @@ async function fetchYahoo(symbol: string): Promise<PriceQuote> {
       price: price ?? null,
       currency: (q?.currency as string | undefined) ?? null,
       source: "yahoo",
+      weekHigh52: (q?.fiftyTwoWeekHigh as number | undefined) ?? null,
+      weekLow52: (q?.fiftyTwoWeekLow as number | undefined) ?? null,
     };
   } catch (err) {
     return {
@@ -50,6 +54,8 @@ async function fetchYahoo(symbol: string): Promise<PriceQuote> {
       price: null,
       currency: null,
       source: "yahoo",
+      weekHigh52: null,
+      weekLow52: null,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -68,6 +74,8 @@ async function fetchMfApi(schemeCode: string): Promise<PriceQuote> {
       price: nav ? Number(nav) : null,
       currency: "INR",
       source: "mfapi",
+      weekHigh52: null,
+      weekLow52: null,
     };
   } catch (err) {
     return {
@@ -75,6 +83,8 @@ async function fetchMfApi(schemeCode: string): Promise<PriceQuote> {
       price: null,
       currency: null,
       source: "mfapi",
+      weekHigh52: null,
+      weekLow52: null,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -143,6 +153,8 @@ export async function fetchPriceForHolding(
       price: perGram,
       currency: "INR",
       source: "spot",
+      weekHigh52: null,
+      weekLow52: null,
     };
   }
   if (row.current_price !== null) {
@@ -151,6 +163,8 @@ export async function fetchPriceForHolding(
       price: row.current_price,
       currency: row.currency,
       source: "manual",
+      weekHigh52: null,
+      weekLow52: null,
     };
   }
   return {
@@ -158,6 +172,8 @@ export async function fetchPriceForHolding(
     price: row.avg_buy_price,
     currency: row.currency,
     source: "manual",
+    weekHigh52: null,
+    weekLow52: null,
   };
 }
 
@@ -183,13 +199,19 @@ export async function fetchAllocationPrices(
   return Object.fromEntries(results);
 }
 
-export async function fetchStockInfo(
-  symbol: string,
-): Promise<{
+export interface StockInfo {
   sector: string | null;
   region: "US" | "IN" | null;
   marketCapUsd: number | null;
-}> {
+  roe: number | null;
+  debtToEquity: number | null;
+  currentRatio: number | null;
+  bookValue: number | null;
+  pegRatio: number | null;
+  roce: number | null;
+}
+
+export async function fetchStockInfo(symbol: string): Promise<StockInfo> {
   const region: "US" | "IN" | null = /\.(NS|BO)$/.test(symbol)
     ? "IN"
     : /^[A-Z.]+$/.test(symbol)
@@ -197,12 +219,32 @@ export async function fetchStockInfo(
       : null;
   try {
     const summary = (await yahoo.quoteSummary(symbol, {
-      modules: ["assetProfile", "price"],
+      modules: [
+        "assetProfile",
+        "price",
+        "financialData",
+        "defaultKeyStatistics",
+        "summaryDetail",
+      ],
     })) as {
       assetProfile?: { sector?: string };
       price?: {
         marketCap?: number | { raw?: number };
         currency?: string;
+      };
+      financialData?: {
+        returnOnEquity?: number | { raw?: number };
+        debtToEquity?: number | { raw?: number };
+        currentRatio?: number | { raw?: number };
+        earningsGrowth?: number | { raw?: number };
+      };
+      defaultKeyStatistics?: {
+        bookValue?: number | { raw?: number };
+        pegRatio?: number | { raw?: number };
+        earningsQuarterlyGrowth?: number | { raw?: number };
+      };
+      summaryDetail?: {
+        trailingPE?: number | { raw?: number };
       };
     };
     const sector = summary.assetProfile?.sector ?? null;
@@ -226,10 +268,141 @@ export async function fetchStockInfo(
         marketCapUsd = marketCapNative;
       }
     }
-    return { sector, region, marketCapUsd };
+
+    let roe = unwrapNumber(summary.financialData?.returnOnEquity);
+    const debtToEquityPct = unwrapNumber(summary.financialData?.debtToEquity);
+    let currentRatio = unwrapNumber(summary.financialData?.currentRatio);
+    // Yahoo's debtToEquity comes in as percentage points (e.g. 79.548 = 79.548%).
+    // Normalize to a true ratio (0.79548) so the < 0.5 threshold reads naturally.
+    let debtToEquity = debtToEquityPct !== null ? debtToEquityPct / 100 : null;
+
+    // For Indian small/mid-caps Yahoo's financialData is sparse — fall back to
+    // computing from the raw balance sheet + income statement. ROCE is always
+    // computed from fundamentals (Yahoo doesn't expose it directly).
+    let roce: number | null = null;
+    const fund = await fetchFundamentals(symbol);
+    if (fund) {
+      if (roe === null && fund.netIncome !== null && fund.equity)
+        roe = fund.netIncome / fund.equity;
+      if (debtToEquity === null && fund.totalDebt !== null && fund.equity)
+        debtToEquity = fund.totalDebt / fund.equity;
+      if (
+        currentRatio === null &&
+        fund.currentAssets !== null &&
+        fund.currentLiabilities
+      ) {
+        currentRatio = fund.currentAssets / fund.currentLiabilities;
+      }
+      if (
+        fund.operatingIncome !== null &&
+        fund.totalAssets !== null &&
+        fund.currentLiabilities !== null
+      ) {
+        const capitalEmployed = fund.totalAssets - fund.currentLiabilities;
+        if (capitalEmployed > 0)
+          roce = fund.operatingIncome / capitalEmployed;
+      }
+    }
+
+    const bookValue = unwrapNumber(summary.defaultKeyStatistics?.bookValue);
+    let pegRatio = unwrapNumber(summary.defaultKeyStatistics?.pegRatio);
+    if (pegRatio === null) {
+      // Fallback: PEG = trailingPE / (earnings growth %)
+      const pe = unwrapNumber(summary.summaryDetail?.trailingPE);
+      const growth =
+        unwrapNumber(summary.financialData?.earningsGrowth) ??
+        unwrapNumber(summary.defaultKeyStatistics?.earningsQuarterlyGrowth);
+      if (pe !== null && pe > 0 && growth !== null && growth > 0) {
+        pegRatio = pe / (growth * 100);
+      }
+    }
+
+    return {
+      sector,
+      region,
+      marketCapUsd,
+      roe,
+      debtToEquity,
+      currentRatio,
+      bookValue,
+      pegRatio,
+      roce,
+    };
   } catch {
-    return { sector: null, region, marketCapUsd: null };
+    return {
+      sector: null,
+      region,
+      marketCapUsd: null,
+      roe: null,
+      debtToEquity: null,
+      currentRatio: null,
+      bookValue: null,
+      pegRatio: null,
+      roce: null,
+    };
   }
+}
+
+interface FundamentalsRow {
+  currentAssets: number | null;
+  currentLiabilities: number | null;
+  totalDebt: number | null;
+  equity: number | null;
+  netIncome: number | null;
+  operatingIncome: number | null;
+  totalAssets: number | null;
+}
+
+async function fetchFundamentals(symbol: string): Promise<FundamentalsRow | null> {
+  try {
+    const period1 = new Date(Date.now() - 2 * 365 * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    const series = (await yahoo.fundamentalsTimeSeries(symbol, {
+      period1,
+      type: "annual",
+      module: "all",
+    })) as Array<{
+      currentAssets?: number;
+      currentLiabilities?: number;
+      totalDebt?: number;
+      stockholdersEquity?: number;
+      totalEquityGrossMinorityInterest?: number;
+      netIncome?: number;
+      operatingIncome?: number;
+      ebit?: number;
+      totalAssets?: number;
+    }>;
+    const latest = series?.[series.length - 1];
+    if (!latest) return null;
+    return {
+      currentAssets: latest.currentAssets ?? null,
+      currentLiabilities: latest.currentLiabilities ?? null,
+      totalDebt: latest.totalDebt ?? null,
+      equity:
+        latest.stockholdersEquity ??
+        latest.totalEquityGrossMinorityInterest ??
+        null,
+      netIncome: latest.netIncome ?? null,
+      operatingIncome: latest.operatingIncome ?? latest.ebit ?? null,
+      totalAssets: latest.totalAssets ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function unwrapNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (
+    typeof v === "object" &&
+    v !== null &&
+    "raw" in v &&
+    typeof (v as { raw?: unknown }).raw === "number"
+  ) {
+    return (v as { raw: number }).raw;
+  }
+  return null;
 }
 
 export { marketCapBucket } from "./market-cap";

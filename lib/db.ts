@@ -59,6 +59,30 @@ try {
 } catch {
   // column already exists
 }
+for (const col of [
+  "roe",
+  "debt_to_equity",
+  "current_ratio",
+  "book_value",
+  "peg_ratio",
+  "roce",
+]) {
+  try {
+    db.exec(`ALTER TABLE holdings ADD COLUMN ${col} REAL`);
+  } catch {
+    // column already exists
+  }
+}
+for (const alter of [
+  `ALTER TABLE allocations ADD COLUMN deadline_days INTEGER`,
+  `ALTER TABLE allocations ADD COLUMN frequency TEXT`,
+]) {
+  try {
+    db.exec(alter);
+  } catch {
+    // column already exists, or table not yet created (handled below)
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS holdings (
@@ -79,6 +103,12 @@ db.exec(`
     commodity_form TEXT,
     current_price REAL,
     market_cap_usd REAL,
+    roe REAL,
+    debt_to_equity REAL,
+    current_ratio REAL,
+    book_value REAL,
+    peg_ratio REAL,
+    roce REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -105,6 +135,8 @@ db.exec(`
     target_symbol TEXT,
     amount REAL NOT NULL,
     notes TEXT,
+    deadline_days INTEGER,
+    frequency TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_allocations_broker ON allocations(broker_id);
@@ -178,9 +210,17 @@ export interface HoldingRow {
   commodity_form: CommodityForm | null;
   current_price: number | null;
   market_cap_usd: number | null;
+  roe: number | null;
+  debt_to_equity: number | null;
+  current_ratio: number | null;
+  book_value: number | null;
+  peg_ratio: number | null;
+  roce: number | null;
   created_at: string;
   updated_at: string;
 }
+
+export type Frequency = "daily" | "weekly";
 
 export interface AllocationRow {
   id: number;
@@ -189,5 +229,7 @@ export interface AllocationRow {
   target_symbol: string | null;
   amount: number;
   notes: string | null;
+  deadline_days: number | null;
+  frequency: Frequency | null;
   created_at: string;
 }

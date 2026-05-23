@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AllocationRow, HoldingRow } from "@/lib/db";
+import type { AllocationRow, Frequency, HoldingRow } from "@/lib/db";
+import {
+  daysElapsed,
+  isExpired,
+  perPeriodAmount,
+} from "@/lib/schedule";
 import {
   createHolding,
   deleteHolding,
@@ -11,6 +16,7 @@ import {
 import {
   createAllocation,
   deleteAllocation,
+  updateAllocation,
 } from "@/lib/allocations-client";
 import { formatCurrency, formatNumber, toInr } from "@/lib/format";
 import type { PriceQuote } from "@/lib/prices";
@@ -59,7 +65,18 @@ interface AllocForm {
   amount: string;
   target_symbol: string;
   asset_type: AssetType;
+  deadline_days: string;
+  frequency: "" | Frequency;
 }
+
+const EMPTY_ALLOC: AllocForm = {
+  label: "",
+  amount: "",
+  target_symbol: "",
+  asset_type: "stock",
+  deadline_days: "",
+  frequency: "",
+};
 
 export default function AvailableFunds({
   brokers,
@@ -79,14 +96,68 @@ export default function AvailableFunds({
   const [editAmount, setEditAmount] = useState("");
 
   const [allocBrokerId, setAllocBrokerId] = useState<number | null>(null);
-  const [allocForm, setAllocForm] = useState<AllocForm>({
-    label: "",
-    amount: "",
-    target_symbol: "",
-    asset_type: "stock",
-  });
+  const [allocForm, setAllocForm] = useState<AllocForm>({ ...EMPTY_ALLOC });
   const [allocError, setAllocError] = useState<string | null>(null);
   const [allocBusy, setAllocBusy] = useState(false);
+
+  const [editingAllocId, setEditingAllocId] = useState<number | null>(null);
+  const [editAllocForm, setEditAllocForm] = useState<AllocForm>({ ...EMPTY_ALLOC });
+  const [editAllocBusy, setEditAllocBusy] = useState(false);
+  const [editAllocError, setEditAllocError] = useState<string | null>(null);
+
+  function startEditAllocation(a: AllocationRow) {
+    setEditingAllocId(a.id);
+    setEditAllocForm({
+      label: a.label,
+      amount: String(a.amount),
+      target_symbol: a.target_symbol ?? "",
+      asset_type: a.target_symbol && /^\d+$/.test(a.target_symbol) ? "mf" : "stock",
+      deadline_days: a.deadline_days !== null ? String(a.deadline_days) : "",
+      frequency: a.frequency ?? "",
+    });
+    setEditAllocError(null);
+    setAllocBrokerId(null);
+  }
+
+  function cancelEditAllocation() {
+    setEditingAllocId(null);
+    setEditAllocError(null);
+  }
+
+  async function submitEditAllocation(id: number, e: React.FormEvent) {
+    e.preventDefault();
+    setEditAllocBusy(true);
+    setEditAllocError(null);
+    try {
+      const hasDeadline = editAllocForm.deadline_days.trim() !== "";
+      const hasFreq = !!editAllocForm.frequency;
+      if (hasDeadline !== hasFreq) {
+        throw new Error("Set both deadline and frequency, or leave both empty.");
+      }
+      const deadline_days = hasDeadline ? Number(editAllocForm.deadline_days) : null;
+      const frequency = hasFreq ? (editAllocForm.frequency as Frequency) : null;
+      if (
+        deadline_days !== null &&
+        (!Number.isFinite(deadline_days) || deadline_days <= 0)
+      ) {
+        throw new Error("Deadline must be a positive number of days.");
+      }
+      const saved = await updateAllocation(id, {
+        label: editAllocForm.label.trim(),
+        amount: Number(editAllocForm.amount),
+        target_symbol: editAllocForm.target_symbol.trim() || null,
+        deadline_days,
+        frequency,
+      });
+      setAllocs((prev) => prev.map((x) => (x.id === id ? saved : x)));
+      setEditingAllocId(null);
+      refresh();
+    } catch (err) {
+      setEditAllocError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEditAllocBusy(false);
+    }
+  }
 
   function refresh() {
     router.refresh();
@@ -102,7 +173,7 @@ export default function AvailableFunds({
       if (!brokerName) throw new Error("Broker name required");
       const saved = await createHolding({
         asset_type: "cash",
-        symbol: `cash-${brokerName.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}`,
+        symbol: `cash-${brokerName.toLowerCase().replace(/\s+/g, "-")}`,
         name: brokerName,
         quantity: 1,
         avg_buy_price: Number(fundForm.amount),
@@ -155,19 +226,28 @@ export default function AvailableFunds({
     setAllocBusy(true);
     setAllocError(null);
     try {
+      const hasDeadline = allocForm.deadline_days.trim() !== "";
+      const hasFreq = !!allocForm.frequency;
+      if (hasDeadline !== hasFreq) {
+        throw new Error("Set both deadline and frequency, or leave both empty.");
+      }
+      const deadline_days = hasDeadline
+        ? Number(allocForm.deadline_days)
+        : null;
+      const frequency = hasFreq ? (allocForm.frequency as Frequency) : null;
+      if (deadline_days !== null && (!Number.isFinite(deadline_days) || deadline_days <= 0)) {
+        throw new Error("Deadline must be a positive number of days.");
+      }
       const saved = await createAllocation({
         broker_id: brokerId,
         label: allocForm.label.trim(),
         amount: Number(allocForm.amount),
         target_symbol: allocForm.target_symbol.trim() || null,
+        deadline_days,
+        frequency,
       });
       setAllocs((prev) => [...prev, saved]);
-      setAllocForm({
-        label: "",
-        amount: "",
-        target_symbol: "",
-        asset_type: "stock",
-      });
+      setAllocForm({ ...EMPTY_ALLOC });
       setAllocBrokerId(null);
       refresh();
     } catch (err) {
@@ -379,7 +459,140 @@ export default function AvailableFunds({
 
                 {brokerAllocs.length > 0 && (
                   <ul className="space-y-1">
-                    {brokerAllocs.map((a) => (
+                    {brokerAllocs.map((a) => {
+                      if (editingAllocId === a.id) {
+                        return (
+                          <li
+                            key={a.id}
+                            className="bg-neutral-950 border border-emerald-700/40 rounded px-3 py-3"
+                          >
+                            <form
+                              onSubmit={(e) => submitEditAllocation(a.id, e)}
+                              className="space-y-2"
+                            >
+                              <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                                <SelectField
+                                  className="md:col-span-1"
+                                  label="Type"
+                                  value={editAllocForm.asset_type}
+                                  onChange={(v) =>
+                                    setEditAllocForm({ ...editAllocForm, asset_type: v })
+                                  }
+                                  options={[
+                                    { value: "stock", label: "Stock" },
+                                    { value: "etf", label: "ETF" },
+                                    { value: "mf", label: "MF" },
+                                  ]}
+                                />
+                                <div className="md:col-span-3 flex flex-col text-xs gap-1">
+                                  <span className="text-neutral-400">Symbol</span>
+                                  <SymbolSearch
+                                    assetType={editAllocForm.asset_type}
+                                    value={editAllocForm.target_symbol}
+                                    onChange={(symbol) =>
+                                      setEditAllocForm({
+                                        ...editAllocForm,
+                                        target_symbol: symbol,
+                                      })
+                                    }
+                                    onSelect={(r: SymbolSearchResult) =>
+                                      setEditAllocForm({
+                                        ...editAllocForm,
+                                        target_symbol: r.symbol,
+                                        label: editAllocForm.label.trim() || r.name,
+                                      })
+                                    }
+                                    placeholder="Search…"
+                                  />
+                                </div>
+                                <Field
+                                  className="md:col-span-2"
+                                  label="Amount"
+                                  type="number"
+                                  value={editAllocForm.amount}
+                                  onChange={(v) =>
+                                    setEditAllocForm({ ...editAllocForm, amount: v })
+                                  }
+                                  required
+                                />
+                                <Field
+                                  className="md:col-span-6"
+                                  label="Plan label"
+                                  value={editAllocForm.label}
+                                  onChange={(v) =>
+                                    setEditAllocForm({ ...editAllocForm, label: v })
+                                  }
+                                  required
+                                />
+                                <Field
+                                  className="md:col-span-2"
+                                  label="Deadline (days)"
+                                  type="number"
+                                  value={editAllocForm.deadline_days}
+                                  onChange={(v) =>
+                                    setEditAllocForm({
+                                      ...editAllocForm,
+                                      deadline_days: v,
+                                    })
+                                  }
+                                  placeholder="empty for one-off"
+                                />
+                                <SelectField
+                                  className="md:col-span-2"
+                                  label="Frequency"
+                                  value={editAllocForm.frequency}
+                                  onChange={(v) =>
+                                    setEditAllocForm({ ...editAllocForm, frequency: v })
+                                  }
+                                  options={[
+                                    { value: "", label: "— none —" },
+                                    { value: "daily", label: "Daily" },
+                                    { value: "weekly", label: "Weekly" },
+                                  ]}
+                                />
+                                {(() => {
+                                  const dd = Number(editAllocForm.deadline_days);
+                                  const amt = Number(editAllocForm.amount);
+                                  if (
+                                    !editAllocForm.frequency ||
+                                    !Number.isFinite(dd) ||
+                                    dd <= 0 ||
+                                    !Number.isFinite(amt) ||
+                                    amt <= 0
+                                  )
+                                    return null;
+                                  const per = perPeriodAmount(
+                                    amt,
+                                    dd,
+                                    editAllocForm.frequency as Frequency,
+                                  );
+                                  const unit =
+                                    editAllocForm.frequency === "daily" ? "day" : "week";
+                                  return (
+                                    <div className="md:col-span-2 flex flex-col text-xs gap-1 justify-end pb-1.5">
+                                      <span className="text-neutral-500">
+                                        ≈ {formatCurrency(per)} / {unit}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                              <ErrorMessage error={editAllocError} />
+                              <div className="flex gap-2">
+                                <SubmitButton busy={editAllocBusy} label="Save" />
+                                <button
+                                  type="button"
+                                  onClick={cancelEditAllocation}
+                                  className="rounded-md border border-neutral-700 hover:bg-neutral-800 px-3 py-1.5 text-sm"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          </li>
+                        );
+                      }
+                      return (
                       <li
                         key={a.id}
                         className="flex items-center justify-between text-sm bg-neutral-950 border border-neutral-800 rounded px-3 py-1.5"
@@ -419,11 +632,49 @@ export default function AvailableFunds({
                               </div>
                             );
                           })()}
+                          {(() => {
+                            if (
+                              a.deadline_days === null ||
+                              a.deadline_days === undefined ||
+                              !a.frequency
+                            )
+                              return null;
+                            const expired = isExpired(
+                              a.created_at,
+                              a.deadline_days,
+                            );
+                            const per = perPeriodAmount(
+                              a.amount,
+                              a.deadline_days,
+                              a.frequency,
+                            );
+                            const elapsed = daysElapsed(a.created_at);
+                            const unit = a.frequency === "daily" ? "day" : "week";
+                            return (
+                              <div
+                                className={`text-[11px] mt-0.5 ${
+                                  expired ? "text-rose-400" : "text-neutral-500"
+                                }`}
+                              >
+                                {expired
+                                  ? `Plan ended ${elapsed - a.deadline_days} day${
+                                      elapsed - a.deadline_days === 1 ? "" : "s"
+                                    } ago`
+                                  : `${formatCurrency(per)} / ${unit} · day ${elapsed} of ${a.deadline_days}`}
+                              </div>
+                            );
+                          })()}
                         </span>
                         <span className="flex items-center gap-3 shrink-0 ml-3">
                           <span className="tabular-nums">
                             {formatCurrency(a.amount)}
                           </span>
+                          <button
+                            onClick={() => startEditAllocation(a)}
+                            className="text-emerald-400 hover:text-emerald-300 text-xs"
+                          >
+                            Edit
+                          </button>
                           <button
                             onClick={() => removeAllocation(a.id)}
                             className="text-rose-400 hover:text-rose-300 text-xs"
@@ -432,7 +683,8 @@ export default function AvailableFunds({
                           </button>
                         </span>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
 
@@ -503,6 +755,55 @@ export default function AvailableFunds({
                         placeholder="Auto-filled from search; editable"
                         required
                       />
+                      <Field
+                        className="md:col-span-2"
+                        label="Deadline (days)"
+                        type="number"
+                        value={allocForm.deadline_days}
+                        onChange={(v) =>
+                          setAllocForm({ ...allocForm, deadline_days: v })
+                        }
+                        placeholder="e.g. 60"
+                      />
+                      <SelectField
+                        className="md:col-span-2"
+                        label="Frequency"
+                        value={allocForm.frequency}
+                        onChange={(v) =>
+                          setAllocForm({ ...allocForm, frequency: v })
+                        }
+                        options={[
+                          { value: "", label: "— none (one-off plan) —" },
+                          { value: "daily", label: "Daily" },
+                          { value: "weekly", label: "Weekly" },
+                        ]}
+                      />
+                      {(() => {
+                        const dd = Number(allocForm.deadline_days);
+                        const amt = Number(allocForm.amount);
+                        if (
+                          !allocForm.frequency ||
+                          !Number.isFinite(dd) ||
+                          dd <= 0 ||
+                          !Number.isFinite(amt) ||
+                          amt <= 0
+                        )
+                          return null;
+                        const per = perPeriodAmount(
+                          amt,
+                          dd,
+                          allocForm.frequency as Frequency,
+                        );
+                        const unit =
+                          allocForm.frequency === "daily" ? "day" : "week";
+                        return (
+                          <div className="md:col-span-2 flex flex-col text-xs gap-1 justify-end pb-1.5">
+                            <span className="text-neutral-500">
+                              ≈ {formatCurrency(per)} / {unit}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <ErrorMessage error={allocError} />
                     <div className="flex gap-2">
@@ -523,12 +824,7 @@ export default function AvailableFunds({
                   <button
                     onClick={() => {
                       setAllocBrokerId(b.id);
-                      setAllocForm({
-                        label: "",
-                        amount: "",
-                        target_symbol: "",
-                        asset_type: "stock",
-                      });
+                      setAllocForm({ ...EMPTY_ALLOC });
                       setAllocError(null);
                     }}
                     className="text-xs text-emerald-400 hover:text-emerald-300"

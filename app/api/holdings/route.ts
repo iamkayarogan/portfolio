@@ -24,6 +24,12 @@ interface PostBody {
   commodity_form?: "physical" | "digital" | "etf" | null;
   current_price?: number | null;
   market_cap_usd?: number | null;
+  roe?: number | null;
+  debt_to_equity?: number | null;
+  current_ratio?: number | null;
+  book_value?: number | null;
+  peg_ratio?: number | null;
+  roce?: number | null;
 }
 
 export async function GET(req: Request) {
@@ -59,8 +65,9 @@ export async function POST(req: Request) {
       `INSERT INTO holdings
          (asset_type, symbol, name, quantity, avg_buy_price, currency, notes,
           sector, region, fund_type, interest_rate, maturity_date,
-          commodity_metal, commodity_form, current_price, market_cap_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          commodity_metal, commodity_form, current_price, market_cap_usd,
+          roe, debt_to_equity, current_ratio, book_value, peg_ratio, roce)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       enriched.asset_type,
@@ -79,6 +86,12 @@ export async function POST(req: Request) {
       enriched.commodity_form,
       enriched.current_price,
       enriched.market_cap_usd,
+      enriched.roe,
+      enriched.debt_to_equity,
+      enriched.current_ratio,
+      enriched.book_value,
+      enriched.peg_ratio,
+      enriched.roce,
     );
 
   const row = db
@@ -123,14 +136,36 @@ async function enrich(b: PostBody) {
     commodity_form: b.commodity_form ?? null,
     current_price: b.current_price ?? null,
     market_cap_usd: b.market_cap_usd ?? null,
+    roe: b.roe ?? null,
+    debt_to_equity: b.debt_to_equity ?? null,
+    current_ratio: b.current_ratio ?? null,
+    book_value: b.book_value ?? null,
+    peg_ratio: b.peg_ratio ?? null,
+    roce: b.roce ?? null,
   };
 
   if (base.asset_type === "stock") {
-    if (!base.sector || !base.region || base.market_cap_usd === null) {
+    const needsEnrich =
+      !base.sector ||
+      !base.region ||
+      base.market_cap_usd === null ||
+      base.roe === null ||
+      base.debt_to_equity === null ||
+      base.current_ratio === null ||
+      base.book_value === null ||
+      base.peg_ratio === null ||
+      base.roce === null;
+    if (needsEnrich) {
       const info = await fetchStockInfo(base.symbol);
       base.sector ??= info.sector;
       base.region ??= info.region;
       base.market_cap_usd ??= info.marketCapUsd;
+      base.roe ??= info.roe;
+      base.debt_to_equity ??= info.debtToEquity;
+      base.current_ratio ??= info.currentRatio;
+      base.book_value ??= info.bookValue;
+      base.peg_ratio ??= info.pegRatio;
+      base.roce ??= info.roce;
     }
   }
   if (base.asset_type === "etf" && !base.region) {
